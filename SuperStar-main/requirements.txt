@@ -1,0 +1,11 @@
+requests
+pyaes
+beautifulsoup4
+lxml
+argparse
+loguru
+celery
+flask
+fonttools
+openai
+ddddocr==1.5.6
