@@ -143,6 +143,9 @@ def init_chaoxing(common_config, tiku_config):
     
     # 如果没有提供用户名密码，从命令行获取
     if not username or not password:
+        if not sys.stdin.isatty():
+            logger.error("未提供用户名和密码，请通过 -u -p 参数传入或配置 GitHub Secrets")
+            raise InputFormatError("缺少登录凭证：username 或 password 为空")
         username = input("请输入你的手机号, 按回车确认\n手机号:")
         password = input("请输入你的密码, 按回车确认\n密码:")
     
