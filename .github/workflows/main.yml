@@ -46,4 +46,4 @@ jobs:
           CONFEOF
 
       - name: 运行刷课
-        run: python main.py -u "15080621505" -p "qwer13579" -l "264391804" -a continue
+        run: python main.py -u "15080621505" -p "qwer13579" -l "264391804" -a retry

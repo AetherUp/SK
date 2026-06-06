@@ -124,8 +124,8 @@ class RollBackManager:
 
     def add_times(self, id: str):
         """增加回滚次数"""
-        if id == self.rollback_id and self.rollback_times == 3:
-            raise MaxRollBackExceeded("回滚次数已达3次, 请手动检查学习通任务点完成情况")
+        if id == self.rollback_id and self.rollback_times == 10:
+            raise MaxRollBackExceeded("回滚次数已达10次, 请手动检查学习通任务点完成情况")
         else:
             self.rollback_times += 1
 
@@ -237,9 +237,11 @@ def process_chapter(chaoxing, course, point, RB, notopen_action, speed, auto_ski
     """处理单个章节"""
     logger.info(f'当前章节: {point["title"]}')
     
-    if point["has_finished"]:
+    if point["has_finished"] and RB.rollback_times == 0:
         logger.info(f'章节：{point["title"]} 已完成所有任务点')
-        return 1, auto_skip_notopen  # 继续下一章节
+        return 1, auto_skip_notopen
+    elif point["has_finished"] and RB.rollback_times > 0:
+        logger.info(f'章节：{point["title"]} 标记为完成但正在回滚重试，强制重新处理')
     
     # 随机等待，避免请求过快
     sleep_duration = random.uniform(1, 3)
