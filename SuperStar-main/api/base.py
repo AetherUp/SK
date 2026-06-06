@@ -548,39 +548,37 @@ class Chaoxing:
                 answer = random_answer(q["options"])
                 q[f'answerSource{q["id"]}'] = "random"
             else:
-                # 根据响应结果选择答案
-                if q["type"] == "multiple":
-                    # 多选处理
+                # ---- 快速路径：LLM 直接输出了字母 ----
+                if q["type"] == "single" and len(res) == 1 and res.isalpha():
+                    answer = res.upper()
+                elif q["type"] == "multiple" and re.fullmatch(r'[A-Fa-f]{2,}', res):
+                    answer = "".join(sorted(res.upper()))
+                elif q["type"] == "judgement" and res in ("对", "错"):
+                    answer = "true" if res == "对" else "false"
+                # ---- 退化路径：LLM 输出文本，走原有子序列匹配 ----
+                elif q["type"] == "multiple":
                     options_list = multi_cut(q["options"])
                     res_list = multi_cut(res)
                     if res_list is not None and options_list is not None:
                         for _a in clean_res(res_list):
                             for o in options_list:
-                                if (
-                                        is_subsequence(_a, o)  # 去掉各种符号和前面ABCD的答案应当是选项的子序列
-                                ):
+                                if is_subsequence(_a, o):
                                     answer += o[:1]
-                        # 对答案进行排序, 否则会提交失败
                         answer = "".join(sorted(answer))
-                    # else 如果分割失败那么就直接到下面去随机选
                 elif q["type"] == "single":
-                    # 单选也进行切割，主要是防止返回的答案有异常字符
                     options_list = multi_cut(q["options"])
                     if options_list is not None:
                         t_res = clean_res(res)
-                        for o in options_list:
-                            if is_subsequence(t_res[0], o):
-                                answer = o[:1]
-                                break
+                        if t_res:
+                            for o in options_list:
+                                if is_subsequence(t_res[0], o):
+                                    answer = o[:1]
+                                    break
                 elif q["type"] == "judgement":
                     answer = "true" if self.tiku.judgement_select(res) else "false"
                 elif q["type"] == "completion":
-                    if isinstance(res,list):
-                        answer = "".join(answer)
-                    elif isinstance(res,str):
-                        answer = res
+                    answer = res if isinstance(res, str) else "".join(res) if isinstance(res, list) else str(res)
                 else:
-                    # 其他类型直接使用答案 （目前仅知有简答题，待补充处理）
                     answer = res
 
                 if not answer:  # 检查 answer 是否为空
