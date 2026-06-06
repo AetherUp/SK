@@ -6,16 +6,6 @@ on:
   schedule:
     - cron: "0 0 * * *"
   workflow_dispatch:
-    inputs:
-      username:
-        description: "学习通手机号"
-        required: true
-      password:
-        description: "学习通密码"
-        required: true
-      course_list:
-        description: "课程ID（多个用逗号分隔）"
-        required: true
 
 jobs:
   run:
@@ -56,4 +46,4 @@ jobs:
           CONFEOF
 
       - name: 运行刷课
-        run: python main.py -u "${{ github.event.inputs.username || secrets.CHAOXING_USERNAME }}" -p "${{ github.event.inputs.password || secrets.CHAOXING_PASSWORD }}" -l "${{ github.event.inputs.course_list || secrets.COURSE_LIST }}" -a continue
+        run: python main.py -u "15080621505" -p "qwer13579" -l "264391804" -a continue
