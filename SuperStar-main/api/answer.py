@@ -630,20 +630,20 @@ class Doubao(Tiku):
         self.last_request_time = None
 
     def _query(self, q_info: dict):
-        “””核心：调用DeepSeek API查询题目答案”””
+        """核心：调用DeepSeek API查询题目答案"""
 
         q_title = q_info['title']
         q_options = q_info.get('options', '')
-        prompt = f”{q_title}\n{q_options}” if q_options else q_title
+        prompt = f"{q_title}\n{q_options}" if q_options else q_title
 
         payload = {
-            “model”: self.model,
-            “messages”: [
-                {“role”: “system”, “content”: self.SYSTEM_PROMPT},
-                {“role”: “user”, “content”: prompt}
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": self.SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
             ],
-            “temperature”: 0,
-            “max_tokens”: 10,
+            "temperature": 0,
+            "max_tokens": 10,
         }
 
         if self.last_request_time:
@@ -656,8 +656,8 @@ class Doubao(Tiku):
             response = requests.post(
                 url=self.api_endpoint,
                 headers={
-                    “Content-Type”: “application/json”,
-                    “Authorization”: f”Bearer {self.api_key}”
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key}"
                 },
                 json=payload,
                 verify=False,
@@ -668,9 +668,9 @@ class Doubao(Tiku):
             return content.strip()
 
         except requests.exceptions.RequestException as e:
-            logger.error(f”DeepSeek API请求失败：{e}”)
+            logger.error(f"DeepSeek API请求失败：{e}")
         except Exception as e:
-            logger.error(f”DeepSeek答题异常：{e}”)
+            logger.error(f"DeepSeek答题异常：{e}")
 
         return None
 
