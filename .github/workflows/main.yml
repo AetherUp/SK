@@ -57,9 +57,4 @@ jobs:
 
       - name: 运行刷课
         if: ${{ github.event.inputs.username || secrets.CHAOXING_USERNAME || github.event_name == 'workflow_dispatch' }}
-        run: |
-          python main.py \
-            -u "${{ github.event.inputs.username || secrets.CHAOXING_USERNAME }}" \
-            -p "${{ github.event.inputs.password || secrets.CHAOXING_PASSWORD }}" \
-            -l "${{ github.event.inputs.course_list || secrets.COURSE_LIST }}" \
-            -a continue
+        run: python main.py -u "${{ github.event.inputs.username || secrets.CHAOXING_USERNAME }}" -p "${{ github.event.inputs.password || secrets.CHAOXING_PASSWORD }}" -l "${{ github.event.inputs.course_list || secrets.COURSE_LIST }}" -a continue
