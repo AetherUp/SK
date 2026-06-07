@@ -243,9 +243,12 @@ def process_chapter(chaoxing, course, point, RB, notopen_action, speed, auto_ski
     elif point["has_finished"] and RB.rollback_times > 0:
         logger.info(f'章节：{point["title"]} 标记为完成但正在回滚重试，强制重新处理')
     
-    # 随机等待，避免请求过快
-    sleep_duration = random.uniform(1, 3)
-    logger.debug(f"本次随机等待时间: {sleep_duration:.3f}s")
+    # 随机等待，模拟真人节奏：多数较短，偶尔长暂停
+    if random.random() < 0.1:
+        sleep_duration = random.uniform(120, 600)  # 10% 概率长暂停 2-10 分钟
+    else:
+        sleep_duration = random.uniform(3, 15)     # 正常间隔 3-15 秒
+    logger.debug(f"本次随机等待时间: {sleep_duration:.1f}s")
     time.sleep(sleep_duration)
     
     # 获取当前章节的所有任务点

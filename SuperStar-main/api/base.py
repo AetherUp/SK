@@ -25,7 +25,10 @@ def get_timestamp():
 
 
 def get_random_seconds():
-    return random.randint(30, 90)
+    # 模拟真实观看行为：多数时间连续看，偶尔长时间暂停
+    if random.random() < 0.15:  # 15% 概率模拟走神/暂停
+        return random.randint(120, 480)
+    return random.randint(45, 180)
 
 
 def init_session(isVideo: bool = False, isAudio: bool = False):
@@ -592,6 +595,18 @@ class Chaoxing:
             # 填充答案
             q["answerField"][f'answer{q["id"]}'] = answer
             logger.info(f'{q["title"]} 填写答案为 {answer}')
+        # 防检测：题库数≥4 题时随机答错 1 题，模拟真人
+        if total_questions >= 4 and found_answers >= 3 and random.random() < 0.3:
+            covered = [q for q in questions["questions"] if q.get(f'answerSource{q["id"]}') == "cover"]
+            if covered:
+                victim = random.choice(covered)
+                wrong = random_answer(victim["options"])
+                if wrong:
+                    victim["answerField"][f'answer{victim["id"]}'] = wrong
+                    victim[f'answerSource{victim["id"]}'] = "random"
+                    found_answers -= 1
+                    logger.info(f"防检测：故意答错 [{victim['title'][:20]}] -> {wrong}")
+
         cover_rate = (found_answers / total_questions) * 100
         logger.info(f"章节检测题库覆盖率： {cover_rate:.0f}%")
         # 提交模式  现在与题库绑定,留空直接提交, 1保存但不提交
