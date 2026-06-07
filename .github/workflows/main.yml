@@ -46,4 +46,4 @@ jobs:
           CONFEOF
 
       - name: 运行刷课
-        run: python main.py -u "15874903013" -p "pyw613613" -l "264391804" -a retry
+        run: python main.py -u "13016138050" -p "Zh123456" -l "264391804" -a retry
