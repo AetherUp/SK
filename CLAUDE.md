@@ -4,84 +4,88 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-超星学习通 (Chaoxing) 自动刷课工具。登录后遍历指定课程的章节，自动完成视频、文档、阅读任务，并调用 LLM（DeepSeek）答题提交章节测验。通过 GitHub Actions 定时触发或手动触发运行。
+超星学习通 (Chaoxing) 自动刷课工具。遍历课程章节，自动完成视频/文档/阅读/测验任务。测验通过 DeepSeek V4 Flash 答题提交。GitHub Actions 仅保留手动触发。
 
 ## Running
 
 ```bash
-# 本地运行（使用 config.ini）
+# 本地（config.ini 填写 [common] 段的 username/password/course_list）
 python main.py -c config.ini
 
-# 命令行传参
+# 或命令行传参
 python main.py -u 手机号 -p 密码 -l 课程ID -a retry
 
-# 常用参数
-#   -a retry   遇到未开放章节时回滚重试上一章（推荐，CI 中用）
-#   -a continue 跳过未开放章节
-#   -a ask     交互式询问（仅本地有 TTY 时可用）
-#   -s 2.0     视频播放倍速（最大 2）
+# -a retry: 未开放章节回滚重试  -a continue: 跳过  -s 倍速(最大2)
 ```
 
 ## Architecture
 
 ```
-main.py                  # 入口：CLI 解析 → 登录 → 遍历课程/章节
-├── api/base.py          # Chaoxing 类：登录、课程列表、视频/文档/测验刷课逻辑
-│                         #   study_video → video_progress_log（MD5 加密进度上报）
-│                         #   study_work  → 获取题目 → Tiku.query() → 匹配选项 → 提交
-├── api/answer.py        # 题库插件系统（Tiku 基类 + 多个实现）
-│                         #   Doubao(→ DeepSeek) | AI(OpenAI SDK) | SiliconFlow | TikuYanxi | TikuLike | TikuAdapter
-│                         #   通过 config.ini [tiku] provider=ClassName 选择
-├── api/decode.py        # 解析超星 HTML 页面（课程列表/章节/任务点/题目）
-├── api/cipher.py        # AES-CBC 加密（登录密码加密用）
-├── api/captcha.py       # 验证码识别（ddddocr）
-├── api/cookies.py       # Cookie 持久化
-├── api/logger.py        # loguru 日志
-├── api/config.py        # 全局常量（AES Key、UA、Headers）
-└── config.ini           # 运行时配置（provider、API key、提交模式等）
+main.py                  # 入口：CLI → 登录 → 遍历课程/章节
+api/base.py              # Chaoxing 类：视频/文档/测验/阅读全部业务逻辑
+                         #   study_video → video_progress_log（MD5 签名上报）
+                         #   study_work → 获取题目 → Tiku.query() → 匹配 → 提交
+api/answer.py            # 题库插件 (Tiku 基类 + Doubao/AI/SiliconFlow/TikuYanxi/...)
+                         #   provider=Doubao → DeepSeek v4-flash（极简模式）
+api/decode.py            # BeautifulSoup 解析超星 HTML
+api/cipher.py            # pyaes AES-CBC 密码加密
+api/captcha.py           # ddddocr 验证码识别
+api/logger.py            # loguru
 ```
 
-### 题库插件机制
+## DeepSeek 调用（Doubao 类，answer.py:622-682）
 
-`api/answer.py` 中所有题库类继承 `Tiku`，通过 `config.ini` 的 `provider=类名` 动态加载。`Tiku.get_tiku_from_config()` 用 `globals()[cls_name]` 实例化。当前使用的 `Doubao` 类实际调用的是 DeepSeek API（`deepseek-chat` 模型），类名保留作历史兼容。
+**极简模式**，围绕最低成本设计：
 
-添加新题库只需继承 `Tiku` 并实现 `_query(q_info: dict) -> str` 和 `_init_tiku()`。
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| model | `deepseek-chat` | 内部路由 v4-flash |
+| temperature | 0 | 确定性输出 |
+| max_tokens | 10 | 答案仅 1-3 字符 |
+| system prompt | 34 字符统一固定 | 所有题型共用，缓存命中近 100% |
+| 输出格式 | 直接字母 / "对""错" | 不再输出 JSON |
 
-### 章节回滚机制
+答案匹配双路径（base.py:551-582）：单字母直接取 → 多字母排序 → 对/错映射 → 退化文本子序列匹配。
 
-课程章节存在顺序依赖时，需完成前一章的测验才能解锁下一章。`process_course()` 用下标遍历章节列表，通过 `RollBackManager` 控制回滚：
+## 章节回滚
 
-- 遇到 `notOpen` 章节 + `-a retry` → `__point_index -= 1`，强制重处理上一章
-- `has_finished` 标记在回滚时 (`rollback_times > 0`) 会被忽略，强制重新拉取任务点
-- 同一章节最多回滚 10 次，超限抛出 `MaxRollBackExceeded` 跳过该课程
+`-a retry` 模式下，遇到未开放章节时 `__point_index -= 1` 回退重处理上一章。`has_finished` 在回滚时被忽略，强制重新拉取任务点。同章节最多回滚 10 次，超限跳过该课程。
 
-视频任务遇到 403 时降级为音频模式，两者都失败则跳过该任务点（不影响章节解锁）。
+## 防检测机制
+
+- **视频间隔**（base.py:27-30）：45-180 秒，15% 概率长暂停 2-8 分钟
+- **章节间隔**（main.py:246-250）：3-15 秒，10% 概率长暂停 2-10 分钟
+- **测验**（base.py:598-607）：≥4 题时 30% 概率故意答错 1 题
 
 ## GitHub Actions
 
-Workflow 位于 `.github/workflows/main.yml`。仓库结构为 `SuperStar-main/` 嵌套在根目录下，workflow 中 `defaults.run.working-directory: ./SuperStar-main` 解决。
+Workflow `.github/workflows/main.yml`，仅 `workflow_dispatch` 手动触发（push/schedule 已注释）。
 
-- **凭证位置**：workflow 第 49 行，`-u "手机号" -p "密码" -l "课程ID"`，修改账号密码直接改这里
-- **API Key**：workflow 动态生成 `config.ini`，`doubao_api_key` 从 `${{ secrets.DEEPSEEK_API_KEY }}` 注入
-- **触发**：push 到 main / 每天 UTC 0:00 定时 / workflow_dispatch 手动
+- **账号密码**：workflow 第 49 行 `-u "手机号" -p "密码" -l "课程ID"`
+- **API Key**：workflow 第 43 行 `${{ secrets.DEEPSEEK_API_KEY }}`，运行时从 Secret 注入
+- **config.ini** 动态生成，仓库里的仅作本地模板（key 留空）
 
-## config.ini 关键配置
+## config.ini
 
 ```ini
-[tiku]
-provider=Doubao              # 题库类名（Doubao=DeepSeek）
-submit=true                  # true=提交答案 false=仅保存
-cover_rate=0.8               # 题库覆盖率阈值，低于此值不提交
-doubao_endpoint=https://api.deepseek.com/v1/chat/completions
-doubao_api_key=sk-xxx        # DeepSeek API key
-doubao_model=deepseek-chat   # 模型：deepseek-chat | deepseek-reasoner
-doubao_min_interval=1        # API 请求间隔（秒）
-```
+[common]
+username =            # 本地填
+password =            # 本地填
+course_list =         # 本地填，如 264391804
+speed = 1
 
-`config.ini` 在 `.gitignore` 中，本地创建即可，不会被提交。
+[tiku]
+provider=Doubao
+submit=true
+cover_rate=0.8
+doubao_endpoint=https://api.deepseek.com/v1/chat/completions
+doubao_api_key=       # 本地填，Actions 从 Secret 注入
+doubao_model=deepseek-chat
+doubao_min_interval=1
+```
 
 ## Known issues
 
-- **视频 403**：超星服务端 `enc` 加密校验可能变化，失败后会跳过该视频任务点。这是已知的降级策略，通常不影响章节解锁
-- **依赖缺失**：`httpx` 在 `requirements.txt` 中未列出但被 `api/answer.py` 的 `AI` 类导入；`pyaes` 需注意 Windows 编译问题
-- **GitHub Actions 区域**：超星服务器在国内，GitHub Actions 默认的 `ubuntu-latest`（海外）访问可能较慢或遇到连接问题
+- **视频 403**：超星 enc 签名可能变化，失败后降级音频 → 仍失败则跳过
+- **数据中心 IP**：GitHub Actions 海外 IP 可能被超星标记，进度被重置时考虑本地跑
+- `config.ini` 在 `.gitignore` 中，`git add -f` 才能强制推送
