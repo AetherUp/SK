@@ -306,29 +306,40 @@ def process_course(chaoxing, course, notopen_action, speed):
 
     total_points = len(point_list["points"])
 
-    # 为了支持课程任务回滚, 采用下标方式遍历任务点
     __point_index = 0
-    # 记录用户是否选择继续跳过连续的未开放任务点
     auto_skip_notopen = False
-    # 初始化回滚管理器
     RB = RollBackManager()
+    # 追踪：上一章是否已完成且无有效任务（避免空章节死循环回滚）
+    prev_was_empty = False
 
     while __point_index < total_points:
         point = point_list["points"][__point_index]
-        # 计算当前进度
         finished = sum(1 for p in point_list["points"] if p["has_finished"])
         pct = finished / total_points * 100
         logger.info(f'课程进度: {finished}/{total_points} ({pct:.0f}%)')
+
+        # 如果上一章是已完成空章节，且当前章未开放 → 直接跳过
+        if prev_was_empty and point.get("has_finished") == False:
+            logger.info(f'章节 {point["title"]} 未开放且前置章节无有效任务，跳过')
+            __point_index += 1
+            prev_was_empty = False
+            continue
 
         result, auto_skip_notopen = process_chapter(
             chaoxing, course, point, RB, notopen_action, speed, auto_skip_notopen
         )
 
-        if result == -1:  # 退出当前课程
+        if result == -1:
             break
-        elif result == 0:  # 重试前一章节
+        elif result == 0:  # 回滚前一章，检查是否已是空章节
+            prev_idx = max(0, __point_index - 1)
+            prev_point = point_list["points"][prev_idx]
+            if prev_point["has_finished"] and RB.rollback_times >= 2:
+                prev_was_empty = True
+                logger.info(f'前置章节 {prev_point["title"]} 已完成且无有效任务，将在下次跳过')
             __point_index -= 1
-        else:  # 继续下一章节
+        else:
+            prev_was_empty = False
             __point_index += 1
 
 
@@ -379,7 +390,12 @@ def main():
         notification = notification.get_notification_from_config()
         notification.init_notification()
         
-        # 检查当前登录状态
+        # 清除旧 Cookie，避免过期 session 导致 403
+        cookie_file = "cookies.txt"
+        if os.path.exists(cookie_file):
+            os.remove(cookie_file)
+            logger.info("已清除旧 Cookie，重新登录")
+
         _login_state = chaoxing.login()
         if not _login_state["status"]:
             raise LoginError(_login_state["msg"])
