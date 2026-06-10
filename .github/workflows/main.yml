@@ -46,4 +46,4 @@ jobs:
           CONFEOF
 
       - name: 运行刷课
-        run: python main.py -u "13789018982" -p "092268ly" -l "264391804" -a retry
+        run: python main.py -u "19318324515" -p "dfy070815" -l "264391804" -a retry
