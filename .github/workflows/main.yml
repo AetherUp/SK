@@ -39,11 +39,11 @@ jobs:
           true_list=正确,对,√,是
           false_list=错误,错,×,否,不对,不正确
 
-          doubao_endpoint = https://api.deepseek.com/v1/chat/completions
-          doubao_api_key = ${{ secrets.DEEPSEEK_API_KEY }}
-          doubao_model = deepseek-chat
-          doubao_min_interval = 1
+          deepseek_endpoint = https://api.deepseek.com/v1/chat/completions
+          deepseek_api_key = ${{ secrets.DEEPSEEK_API_KEY }}
+          deepseek_model = deepseek-chat
+          deepseek_min_interval = 1
           CONFEOF
 
       - name: 运行刷课
-        run: python main.py -u "19015278870" -p "ht20060323" -l "264391804" -a retry
+        run: python main.py -u "15080621505" -p "13579qwer" -l "264391804" -a retry

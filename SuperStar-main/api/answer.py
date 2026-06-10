@@ -676,7 +676,7 @@ class Doubao(Tiku):
 
     def _init_tiku(self):
         """从config.ini加载DeepSeek配置"""
-        self.api_endpoint = self._conf.get('doubao_endpoint', 'https://api.deepseek.com/v1/chat/completions')
-        self.api_key = self._conf['doubao_api_key']
-        self.model = self._conf.get('doubao_model', 'deepseek-chat')
-        self.min_interval = int(self._conf.get('doubao_min_interval', 1))
+        self.api_endpoint = self._conf.get('deepseek_endpoint', 'https://api.deepseek.com/v1/chat/completions')
+        self.api_key = self._conf['deepseek_api_key']
+        self.model = self._conf.get('deepseek_model', 'deepseek-chat')
+        self.min_interval = int(self._conf.get('deepseek_min_interval', 1))

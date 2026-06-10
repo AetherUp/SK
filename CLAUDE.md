@@ -78,10 +78,10 @@ speed = 1
 provider=Doubao
 submit=true
 cover_rate=0.8
-doubao_endpoint=https://api.deepseek.com/v1/chat/completions
-doubao_api_key=       # 本地填，Actions 从 Secret 注入
-doubao_model=deepseek-chat
-doubao_min_interval=1
+deepseek_endpoint=https://api.deepseek.com/v1/chat/completions
+deepseek_api_key=       # 本地填，Actions 从 Secret 注入
+deepseek_model=deepseek-chat
+deepseek_min_interval=1
 ```
 
 ## Known issues

@@ -243,9 +243,9 @@ def process_chapter(chaoxing, course, point, RB, notopen_action, speed, auto_ski
     elif point["has_finished"] and RB.rollback_times > 0:
         logger.info(f'章节：{point["title"]} 标记为完成但正在回滚重试，强制重新处理')
     
-    # 随机等待，模拟真人节奏：多数较短，偶尔长暂停
+    # 随机等待，模拟真人节奏：多数较短，偶尔稍长暂停（不超过 2 分钟）
     if random.random() < 0.1:
-        sleep_duration = random.uniform(120, 600)  # 10% 概率长暂停 2-10 分钟
+        sleep_duration = random.uniform(20, 120)   # 10% 概率暂停 20 秒-2 分钟
     else:
         sleep_duration = random.uniform(3, 15)     # 正常间隔 3-15 秒
     logger.debug(f"本次随机等待时间: {sleep_duration:.1f}s")
@@ -304,25 +304,30 @@ def process_course(chaoxing, course, notopen_action, speed):
         course["courseId"], course["clazzId"], course["cpi"]
     )
 
+    total_points = len(point_list["points"])
+
     # 为了支持课程任务回滚, 采用下标方式遍历任务点
     __point_index = 0
     # 记录用户是否选择继续跳过连续的未开放任务点
     auto_skip_notopen = False
     # 初始化回滚管理器
     RB = RollBackManager()
-    
-    while __point_index < len(point_list["points"]):
+
+    while __point_index < total_points:
         point = point_list["points"][__point_index]
-        logger.debug(f"当前章节 __point_index: {__point_index}")
-        
+        # 计算当前进度
+        finished = sum(1 for p in point_list["points"] if p["has_finished"])
+        pct = finished / total_points * 100
+        logger.info(f'课程进度: {finished}/{total_points} ({pct:.0f}%)')
+
         result, auto_skip_notopen = process_chapter(
             chaoxing, course, point, RB, notopen_action, speed, auto_skip_notopen
         )
-        
+
         if result == -1:  # 退出当前课程
             break
         elif result == 0:  # 重试前一章节
-            __point_index -= 1  # 默认第一个任务总是开放的
+            __point_index -= 1
         else:  # 继续下一章节
             __point_index += 1
 
