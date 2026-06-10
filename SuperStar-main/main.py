@@ -169,15 +169,16 @@ def init_chaoxing(common_config, tiku_config):
 def handle_not_open_chapter(notopen_action, point, tiku, RB, auto_skip_notopen=False):
     """处理未开放章节"""
     if notopen_action == "retry":
-        # 默认处理方式：重试
-        # 针对题库启用情况
         if not tiku or tiku.DISABLE or not tiku.SUBMIT:
-            # 未启用题库或未开启题库提交, 章节检测未完成会导致无法开始下一章, 直接退出
             logger.error(
                 "章节未开启, 可能由于上一章节的章节检测未完成, 也可能由于该章节因为时效已关闭，"
                 "请手动检查完成并提交再重试。或者在配置中配置(自动跳过关闭章节/开启题库并启用提交)"
             )
-            return -1  # 退出标记
+            return -1
+        # 同一章节回滚超过 3 次 → 前置任务无法完成（如视频 403），跳过
+        if RB.rollback_times >= 3:
+            logger.warning(f"章节 {point['title']} 已回滚 {RB.rollback_times} 次仍无法解锁，跳过")
+            return 1
         RB.add_times(point["id"])
         return 0  # 重试上一章节
         
@@ -275,7 +276,7 @@ def process_chapter(chaoxing, course, point, RB, notopen_action, speed, auto_ski
         RB.new_job(point["id"])
 
     except MaxRollBackExceeded:
-        logger.error("回滚次数已达3次, 请手动检查学习通任务点完成情况")
+        logger.error("回滚次数已达10次, 请手动检查学习通任务点完成情况")
         # 跳过该课程
         return -1, auto_skip_notopen  # 退出标记
     
