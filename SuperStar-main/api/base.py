@@ -157,8 +157,8 @@ class Chaoxing:
         _url = f"https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/studentcourse?courseid={_courseid}&clazzid={_clazzid}&cpi={_cpi}&ut=s"
         logger.trace("开始读取课程所有章节...")
         _resp = _session.get(_url)
-        # logger.trace(f"原始章节列表内容:\n{_resp.text}")
         logger.info("课程章节读取成功...")
+        save_cookies(_session)
         return decode_course_point(_resp.text)
 
     def get_job_list(self, _clazzid, _courseid, _cpi, _knowledgeid):
@@ -187,13 +187,18 @@ class Chaoxing:
             # if _job_list and len(_job_list) != 0:
             #     break
         # logger.trace(f"原始任务点列表内容:\n{_resp.text}")
+        # 保存 cookie，确保视频请求拿到完整会话
+        save_cookies(_session)
         logger.info("章节任务点读取成功...")
         return job_list, job_info
 
-    def get_enc(self, clazzId, jobid, objectId, playingTime, duration, userid):
+    def _md5enc(self, clazzId, userid, jobid, objectId, value, duration, suffix):
         return md5(
-            f"[{clazzId}][{userid}][{jobid}][{objectId}][{playingTime * 1000}][d_yHJ!$pdA~5][{duration * 1000}][0_{playingTime}]".encode()
+            f"[{clazzId}][{userid}][{jobid}][{objectId}][{value * 1000}][d_yHJ!$pdA~5][{duration * 1000}][{suffix}]".encode()
         ).hexdigest()
+
+    def get_enc(self, clazzId, jobid, objectId, playingTime, duration, userid):
+        return self._md5enc(clazzId, userid, jobid, objectId, playingTime, duration, f"0_{duration}")
 
     def video_progress_log(
         self,
@@ -206,13 +211,24 @@ class Chaoxing:
         _playingTime,
         _type: str = "Video",
     ):
-        if "courseId" in _job["otherinfo"]:
-            _mid_text = f"otherInfo={_job['otherinfo']}&"
-        else:
-            _mid_text = f"otherInfo={_job['otherinfo']}&courseId={_course['courseId']}&"
-        _success = False
-        # 尝试多种 isdrag 参数组合（超星可能改了校验逻辑）
-        for _isdrag in ["0", "3", "4"]:
+        # 浏览器 confirmed: otherInfo 不含 courseId，始终分开传
+        _raw_other = _job['otherinfo']
+        if 'courseId=' in _raw_other:
+            _raw_other = re.sub(r'&?courseId=\d+', '', _raw_other)
+        _mid_text = f"otherInfo={_raw_other}&courseId={_course['courseId']}&"
+        _uid = self.get_uid()
+        _clazzId = _course['clazzId']
+        _jobid = _job['jobid']
+        _objId = _job['objectid']
+        _enc = self.get_enc(_clazzId, _jobid, _objId, _playingTime, _duration, _uid)
+        _t = get_timestamp()
+        _vfce = self._md5enc(_clazzId, _uid, _jobid, _objId, 0, _duration, "0_0")
+        _ade = self._md5enc(_clazzId, _uid, _jobid, _objId, _duration, _duration, f"0_{_duration}")
+
+        _extra = f"videoFaceCaptureEnc={_vfce}&attDuration={_duration}&attDurationEnc={_ade}&courseEngineInfo=false&"
+
+        # 浏览器 verified: isdrag=2，优先尝试
+        for _isdrag in ["2", "0", "3", "4"]:
             for _rt in ["0.9", "1"]:
                 _url = (
                     f"https://mooc1.chaoxing.com/mooc-ans/multimedia/log/a/"
@@ -225,19 +241,25 @@ class Chaoxing:
                     f"objectId={_job['objectid']}&"
                     f"{_mid_text}"
                     f"jobid={_job['jobid']}&"
-                    f"userid={self.get_uid()}&"
+                    f"userid={_uid}&"
                     f"isdrag={_isdrag}&"
                     f"view=pc&"
-                    f"enc={self.get_enc(_course['clazzId'], _job['jobid'], _job['objectid'], _playingTime, _duration, self.get_uid())}&"
+                    f"enc={_enc}&"
                     f"rt={_rt}&"
+                    f"{_extra}"
                     f"dtype={_type}&"
-                    f"_t={get_timestamp()}"
+                    f"_t={_t}"
                 )
+                # 第一次尝试输出完整 URL 用于对比调试
+                if _playingTime == 0 and _isdrag == "2" and _rt == "0.9":
+                    logger.info(f"脚本请求URL: {_url}")
                 resp = _session.get(_url)
                 if resp.status_code == 200:
                     return resp.json(), 200
+                elif resp.status_code == 403:
+                    logger.warning(f"403响应体: {resp.text[:500]}")
         logger.warning("出现403报错, 尝试修复无效, 正在跳过当前任务点...")
-        return {"isPassed": False}, 403  # 返回一个字典和当前状态
+        return {"isPassed": False}, 403
     def study_video(
         self, _course, _job, _job_info, _speed: float = 1.0, _type: str = "Video"
     ) -> StudyResult:
@@ -248,7 +270,11 @@ class Chaoxing:
         _session.headers.update()
         _info_url = f"https://mooc1.chaoxing.com/ananas/status/{_job['objectid']}?k={self.get_fid()}&flag=normal"
         _video_info = _session.get(_info_url).json()
+        # 调试：输出完整 video_info 看看有没有 videoFaceCaptureEnc
+        logger.debug(f"video_info keys: {list(_video_info.keys())}")
         if _video_info["status"] == "success":
+            # 保存 cookie，确保进度上报时有完整会话
+            save_cookies(_session)
             _dtoken = _video_info["dtoken"]
             _duration = _video_info["duration"]
             _crc = _video_info["crc"]

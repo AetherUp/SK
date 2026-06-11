@@ -44,9 +44,13 @@ def parse_args():
         help="启用调试模式, 输出DEBUG级别日志",
     )
     parser.add_argument(
-        "-a", "--notopen-action", type=str, default="retry", 
+        "-a", "--notopen-action", type=str, default="retry",
         choices=["retry", "ask", "continue"],
         help="遇到关闭任务点时的行为: retry-重试, ask-询问, continue-继续"
+    )
+    parser.add_argument(
+        "--skip-video", action="store_true",
+        help="跳过所有视频任务（视频403无法修复时的兜底方案）"
     )
 
     # 在解析之前捕获 -h 的行为
@@ -107,13 +111,13 @@ def build_config_from_args(args):
 
 
 def init_config():
-    """初始化配置"""
+    """初始化配置，返回 (common_config, tiku_config, notification_config, skip_video)"""
     args = parse_args()
-    
+
     if args.config:
-        return load_config_from_file(args.config)
+        return (*load_config_from_file(args.config), args.skip_video)
     else:
-        return build_config_from_args(args)
+        return (*build_config_from_args(args), args.skip_video)
 
 
 class RollBackManager:
@@ -175,10 +179,6 @@ def handle_not_open_chapter(notopen_action, point, tiku, RB, auto_skip_notopen=F
                 "请手动检查完成并提交再重试。或者在配置中配置(自动跳过关闭章节/开启题库并启用提交)"
             )
             return -1
-        # 同一章节回滚超过 3 次 → 前置任务无法完成（如视频 403），跳过
-        if RB.rollback_times >= 3:
-            logger.warning(f"章节 {point['title']} 已回滚 {RB.rollback_times} 次仍无法解锁，跳过")
-            return 1
         RB.add_times(point["id"])
         return 0  # 重试上一章节
         
@@ -203,38 +203,48 @@ def handle_not_open_chapter(notopen_action, point, tiku, RB, auto_skip_notopen=F
         return 1  # 继续下一章节
 
 
-def process_job(chaoxing, course, job, job_info, speed):
-    """处理单个任务点"""
-    # 视频任务
+def process_job(chaoxing, course, job, job_info, speed, skip_video=False):
+    """处理单个任务点，返回是否成功"""
+    if job["type"] == "video" and skip_video:
+        logger.info(f"跳过视频任务: {job['name']}")
+        return True
     if job["type"] == "video":
         logger.trace(f"识别到视频任务, 任务章节: {course['title']} 任务ID: {job['jobid']}")
-        # 超星的接口没有返回当前任务是否为Audio音频任务
-        video_result = chaoxing.study_video(
-            course, job, job_info, _speed=speed, _type="Video"
-        )
-        if chaoxing.StudyResult.is_failure(video_result):
+        # 最多重试 3 轮，每轮间隔 60 秒
+        for attempt in range(3):
+            video_result = chaoxing.study_video(
+                course, job, job_info, _speed=speed, _type="Video"
+            )
+            if chaoxing.StudyResult.is_success(video_result):
+                return True
             logger.warning("当前任务非视频任务, 正在尝试音频任务解码")
             video_result = chaoxing.study_video(
                 course, job, job_info, _speed=speed, _type="Audio")
-        if chaoxing.StudyResult.is_failure(video_result):
-            logger.warning(
-                f"出现异常任务 -> 任务章节: {course['title']} 任务ID: {job['jobid']}, 已跳过"
-            )
+            if chaoxing.StudyResult.is_success(video_result):
+                return True
+            if attempt < 2:
+                logger.info(f"视频任务失败，60 秒后重试 ({attempt + 1}/3)")
+                time.sleep(60)
+        logger.warning(
+            f"出现异常任务 -> 任务章节: {course['title']} 任务ID: {job['jobid']}, 3次重试均失败"
+        )
+        return False
     # 文档任务
     elif job["type"] == "document":
         logger.trace(f"识别到文档任务, 任务章节: {course['title']} 任务ID: {job['jobid']}")
-        chaoxing.study_document(course, job)
+        return chaoxing.study_document(course, job) != chaoxing.StudyResult.ERROR
     # 测验任务
     elif job["type"] == "workid":
         logger.trace(f"识别到章节检测任务, 任务章节: {course['title']}")
-        chaoxing.study_work(course, job, job_info)
+        return chaoxing.study_work(course, job, job_info) != chaoxing.StudyResult.ERROR
     # 阅读任务
     elif job["type"] == "read":
         logger.trace(f"识别到阅读任务, 任务章节: {course['title']}")
         chaoxing.strdy_read(course, job, job_info)
+    return True
 
 
-def process_chapter(chaoxing, course, point, RB, notopen_action, speed, auto_skip_notopen=False):
+def process_chapter(chaoxing, course, point, RB, notopen_action, speed, auto_skip_notopen=False, skip_video=False):
     """处理单个章节"""
     logger.info(f'当前章节: {point["title"]}')
     
@@ -289,14 +299,19 @@ def process_chapter(chaoxing, course, point, RB, notopen_action, speed, auto_ski
             chaoxing.study_emptypage(course, point)
         return 1, auto_skip_notopen  # 继续下一章节
     
-    # 遍历所有任务点
+    # 遍历所有任务点，记录失败的任务
+    has_failure = False
     for job in jobs:
-        process_job(chaoxing, course, job, job_info, speed)
-    
+        if not process_job(chaoxing, course, job, job_info, speed, skip_video):
+            has_failure = True
+
+    if has_failure:
+        logger.info(f'章节 {point["title"]} 有任务未完成，稍后重试')
+        return 2, auto_skip_notopen  # 重试当前章节
     return 1, auto_skip_notopen  # 继续下一章节
 
 
-def process_course(chaoxing, course, notopen_action, speed):
+def process_course(chaoxing, course, notopen_action, speed, skip_video=False):
     """处理单个课程"""
     logger.info(f"开始学习课程: {course['title']}")
     
@@ -327,18 +342,21 @@ def process_course(chaoxing, course, notopen_action, speed):
             continue
 
         result, auto_skip_notopen = process_chapter(
-            chaoxing, course, point, RB, notopen_action, speed, auto_skip_notopen
+            chaoxing, course, point, RB, notopen_action, speed, auto_skip_notopen, skip_video
         )
 
         if result == -1:
             break
-        elif result == 0:  # 回滚前一章，检查是否已是空章节
+        elif result == 0:  # 回滚前一章
             prev_idx = max(0, __point_index - 1)
             prev_point = point_list["points"][prev_idx]
             if prev_point["has_finished"] and RB.rollback_times >= 2:
                 prev_was_empty = True
                 logger.info(f'前置章节 {prev_point["title"]} 已完成且无有效任务，将在下次跳过')
             __point_index -= 1
+        elif result == 2:  # 重试当前章节，不变下标
+            logger.info("任务未完成，准备重试当前章节")
+            time.sleep(random.uniform(15, 30))
         else:
             prev_was_empty = False
             __point_index += 1
@@ -376,7 +394,7 @@ def main():
     """主程序入口"""
     try:
         # 初始化配置
-        common_config, tiku_config, notification_config = init_config()
+        common_config, tiku_config, notification_config, skip_video = init_config()
         
         # 规范化播放速度
         speed = min(2.0, max(1.0, common_config.get("speed", 1.0)))
@@ -391,12 +409,6 @@ def main():
         notification = notification.get_notification_from_config()
         notification.init_notification()
         
-        # 清除旧 Cookie，避免过期 session 导致 403
-        cookie_file = "cookies.txt"
-        if os.path.exists(cookie_file):
-            os.remove(cookie_file)
-            logger.info("已清除旧 Cookie，重新登录")
-
         _login_state = chaoxing.login()
         if not _login_state["status"]:
             raise LoginError(_login_state["msg"])
@@ -410,7 +422,7 @@ def main():
         # 开始学习
         logger.info(f"课程列表过滤完毕, 当前课程任务数量: {len(course_task)}")
         for course in course_task:
-            process_course(chaoxing, course, notopen_action, speed)
+            process_course(chaoxing, course, notopen_action, speed, skip_video)
         
         logger.info("所有课程学习任务已完成")
         notification.send("chaoxing : 所有课程学习任务已完成")
