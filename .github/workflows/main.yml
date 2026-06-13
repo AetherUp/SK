@@ -26,6 +26,9 @@ jobs:
       - name: 安装依赖
         run: pip install -r requirements.txt
 
+      - name: 安装 Playwright Chromium
+        run: playwright install chromium
+
       - name: 生成配置文件
         run: |
           cat > config.ini << 'CONFEOF'
@@ -46,4 +49,4 @@ jobs:
           CONFEOF
 
       - name: 运行刷课
-        run: python main.py -u "13975076819" -p "Lzz20070613" -l "264391804" -a retry --skip-video
+        run: python main.py -u "13975076819" -p "Lzz20070613" -l "264391804" -a retry

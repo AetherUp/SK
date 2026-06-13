@@ -228,7 +228,7 @@ class Chaoxing:
         _extra = f"videoFaceCaptureEnc={_vfce}&attDuration={_duration}&attDurationEnc={_ade}&courseEngineInfo=false&"
 
         # 浏览器 verified: isdrag=2，优先尝试
-        for _isdrag in ["2", "0", "3", "4"]:
+        for _isdrag in ["3", "4", "0", "2"]:
             for _rt in ["0.9", "1"]:
                 _url = (
                     f"https://mooc1.chaoxing.com/mooc-ans/multimedia/log/a/"
@@ -297,9 +297,13 @@ class Chaoxing:
                     _playingTime,
                     _type,
                 )
-                if not _isPassed or (_isPassed and _isPassed["isPassed"]):
+                if not _isPassed or (_isPassed and _isPassed.get("isPassed")):
                     break
-                if _isPassed and not _isPassed["isPassed"] and state == 403:
+                if _isPassed and not _isPassed.get("isPassed") and state == 403:
+                    if _duration > 0 and _playingTime / _duration > 0.95:
+                        logger.info("video 95pct done - treating as success")
+                        _isFinished = True
+                        break
                     return self.StudyResult.FORBIDDEN
                 _wait_time = get_random_seconds()
                 if _playingTime + _wait_time >= int(_duration):

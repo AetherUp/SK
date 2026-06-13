@@ -28,6 +28,10 @@ def parse_args():
     parser.add_argument(
         "-c", "--config", type=str, default=None, help="使用配置文件运行程序"
     )
+    parser.add_argument(
+        "--profile", type=str, default=None,
+        help="选择配置文件中的账号分组（如 [account:张三]）"
+    )
     parser.add_argument("-u", "--username", type=str, default=None, help="手机号账号")
     parser.add_argument("-p", "--password", type=str, default=None, help="登录密码")
     parser.add_argument(
@@ -52,6 +56,14 @@ def parse_args():
         "--skip-video", action="store_true",
         help="跳过所有视频任务（视频403无法修复时的兜底方案）"
     )
+    parser.add_argument(
+        "--playwright-video", action="store_true", default=True,
+        help="使用 Playwright 真实浏览器播放视频（默认启用，解决 403 问题）"
+    )
+    parser.add_argument(
+        "--no-playwright-video", action="store_false", dest="playwright_video",
+        help="禁用 Playwright 视频播放，使用传统的 HTTP 方式"
+    )
 
     # 在解析之前捕获 -h 的行为
     if len(sys.argv) == 2 and sys.argv[1] in {"-h", "--help"}:
@@ -61,40 +73,97 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_config_from_file(config_path):
-    """从配置文件加载设置"""
+def _collect_account_sections(config):
+    """收集配置文件中所有 [account:NAME] 类型的 section"""
+    accounts = []
+    for section in config.sections():
+        if section.startswith("account:") and section != "account:":
+            name = section.split(":", 1)[1].strip()
+            if name:
+                accounts.append(name)
+    return accounts
+
+
+def _merge_profile_config(common_config, config, profile_name):
+    """将 [account:PROFILE] 节的配置覆盖到 common_config"""
+    section = f"account:{profile_name}"
+    if config.has_section(section):
+        for key, value in config.items(section):
+            common_config[key] = value
+    return common_config
+
+
+def load_config_from_file(config_path, profile=None):
+    """从配置文件加载设置，支持 --profile 指定账号分组"""
     config = configparser.ConfigParser()
     config.read(config_path, encoding="utf8")
-    
+
     common_config = {}
-    tiku_config = {}
-    notification_config = {}
-    
-    # 检查并读取common节
+
+    # 先读取 [common] 节作为默认值
     if config.has_section("common"):
         common_config = dict(config.items("common"))
-        # 处理course_list，将字符串转换为列表
-        if "course_list" in common_config and common_config["course_list"]:
+
+    # 收集所有账号分组
+    available_profiles = _collect_account_sections(config)
+
+    # 如果指定了 profile，直接使用
+    if profile:
+        if profile in available_profiles:
+            common_config = _merge_profile_config(common_config, config, profile)
+            logger.info(f"使用账号分组: {profile}")
+        else:
+            logger.error(f"账号分组 '{profile}' 不存在，可用分组: {available_profiles}")
+            raise InputFormatError(f"账号分组 '{profile}' 不存在")
+
+    # 如果没有指定 profile 但有可用分组，且 common 中没有用户名，交互式选择
+    elif available_profiles and not common_config.get("username"):
+        if sys.stdin.isatty():
+            print("\n" + "=" * 40)
+            print("检测到以下账号分组:")
+            for i, name in enumerate(available_profiles):
+                section = f"account:{name}"
+                uname = config.get(section, "username", fallback="(未设置)")
+                courses = config.get(section, "course_list", fallback="")
+                print(f"  [{i + 1}] {name} (手机号: {uname})")
+            print("  [0] 手动输入账号密码")
+            print("=" * 40)
+            try:
+                choice = input("请选择账号 (输入序号): ").strip()
+                idx = int(choice) - 1
+                if 0 <= idx < len(available_profiles):
+                    profile = available_profiles[idx]
+                    common_config = _merge_profile_config(common_config, config, profile)
+                    logger.info(f"已选择账号分组: {profile}")
+                elif choice == "0":
+                    logger.info("跳过配置文件账号，将手动输入")
+                else:
+                    logger.warning(f"无效选择: {choice}")
+            except (ValueError, EOFError):
+                pass
+
+    # 处理后处理：类型转换
+    if "course_list" in common_config and common_config["course_list"]:
+        if isinstance(common_config["course_list"], str):
             common_config["course_list"] = common_config["course_list"].split(",")
-        # 处理speed，将字符串转换为浮点数
-        if "speed" in common_config:
-            common_config["speed"] = float(common_config["speed"])
-        # 处理notopen_action，设置默认值为retry
-        if "notopen_action" not in common_config:
-            common_config["notopen_action"] = "retry"
-    
-    # 检查并读取tiku节
+    if "speed" in common_config:
+        common_config["speed"] = float(common_config["speed"])
+    if "notopen_action" not in common_config:
+        common_config["notopen_action"] = "retry"
+
+    # 检查并读取 tiku 节
+    tiku_config = {}
     if config.has_section("tiku"):
         tiku_config = dict(config.items("tiku"))
-        # 处理数值类型转换
         for key in ["delay", "cover_rate"]:
             if key in tiku_config:
                 tiku_config[key] = float(tiku_config[key])
 
-    # 检查并读取notification节
+    # 检查并读取 notification 节
+    notification_config = {}
     if config.has_section("notification"):
         notification_config = dict(config.items("notification"))
-    
+
     return common_config, tiku_config, notification_config
 
 
@@ -111,13 +180,13 @@ def build_config_from_args(args):
 
 
 def init_config():
-    """初始化配置，返回 (common_config, tiku_config, notification_config, skip_video)"""
+    """初始化配置，返回 (common_config, tiku_config, notification_config, skip_video, playwright_video)"""
     args = parse_args()
 
     if args.config:
-        return (*load_config_from_file(args.config), args.skip_video)
+        return (*load_config_from_file(args.config, args.profile), args.skip_video, args.playwright_video)
     else:
-        return (*build_config_from_args(args), args.skip_video)
+        return (*build_config_from_args(args), args.skip_video, args.playwright_video)
 
 
 class RollBackManager:
@@ -203,14 +272,28 @@ def handle_not_open_chapter(notopen_action, point, tiku, RB, auto_skip_notopen=F
         return 1  # 继续下一章节
 
 
-def process_job(chaoxing, course, job, job_info, speed, skip_video=False):
+def process_job(chaoxing, course, job, job_info, speed, skip_video=False, playwright_video=True):
     """处理单个任务点，返回是否成功"""
     if job["type"] == "video" and skip_video:
         logger.info(f"跳过视频任务: {job['name']}")
         return True
     if job["type"] == "video":
         logger.trace(f"识别到视频任务, 任务章节: {course['title']} 任务ID: {job['jobid']}")
-        # 最多重试 3 轮，每轮间隔 60 秒
+
+        # Playwright 真实浏览器模式（解决 403 问题）
+        if playwright_video:
+            try:
+                from api.playwright_video import study_video_playwright
+                logger.info(f"[Playwright] 开始处理视频: {job['name']}")
+                if study_video_playwright(course, job, job_info, speed):
+                    return True
+                logger.warning("[Playwright] 视频处理失败，回退到 HTTP 方式")
+            except ImportError:
+                logger.warning("Playwright 未安装，使用 HTTP 方式")
+            except Exception as e:
+                logger.warning(f"Playwright 异常: {e}，回退到 HTTP 方式")
+
+        # HTTP 方式（传统，可能遇到 403）
         for attempt in range(3):
             video_result = chaoxing.study_video(
                 course, job, job_info, _speed=speed, _type="Video"
@@ -222,7 +305,7 @@ def process_job(chaoxing, course, job, job_info, speed, skip_video=False):
                 course, job, job_info, _speed=speed, _type="Audio")
             if chaoxing.StudyResult.is_success(video_result):
                 return True
-            if attempt < 2:
+            if attempt < 1:
                 logger.info(f"视频任务失败，60 秒后重试 ({attempt + 1}/3)")
                 time.sleep(60)
         logger.warning(
@@ -244,7 +327,7 @@ def process_job(chaoxing, course, job, job_info, speed, skip_video=False):
     return True
 
 
-def process_chapter(chaoxing, course, point, RB, notopen_action, speed, auto_skip_notopen=False, skip_video=False):
+def process_chapter(chaoxing, course, point, RB, notopen_action, speed, auto_skip_notopen=False, skip_video=False, playwright_video=True):
     """处理单个章节"""
     logger.info(f'当前章节: {point["title"]}')
     
@@ -302,7 +385,7 @@ def process_chapter(chaoxing, course, point, RB, notopen_action, speed, auto_ski
     # 遍历所有任务点，记录失败的任务
     has_failure = False
     for job in jobs:
-        if not process_job(chaoxing, course, job, job_info, speed, skip_video):
+        if not process_job(chaoxing, course, job, job_info, speed, skip_video, playwright_video):
             has_failure = True
 
     if has_failure:
@@ -311,7 +394,7 @@ def process_chapter(chaoxing, course, point, RB, notopen_action, speed, auto_ski
     return 1, auto_skip_notopen  # 继续下一章节
 
 
-def process_course(chaoxing, course, notopen_action, speed, skip_video=False):
+def process_course(chaoxing, course, notopen_action, speed, skip_video=False, playwright_video=True):
     """处理单个课程"""
     logger.info(f"开始学习课程: {course['title']}")
     
@@ -342,7 +425,7 @@ def process_course(chaoxing, course, notopen_action, speed, skip_video=False):
             continue
 
         result, auto_skip_notopen = process_chapter(
-            chaoxing, course, point, RB, notopen_action, speed, auto_skip_notopen, skip_video
+            chaoxing, course, point, RB, notopen_action, speed, auto_skip_notopen, skip_video, playwright_video
         )
 
         if result == -1:
@@ -394,7 +477,7 @@ def main():
     """主程序入口"""
     try:
         # 初始化配置
-        common_config, tiku_config, notification_config, skip_video = init_config()
+        common_config, tiku_config, notification_config, skip_video, playwright_video = init_config()
         
         # 规范化播放速度
         speed = min(2.0, max(1.0, common_config.get("speed", 1.0)))
@@ -422,7 +505,7 @@ def main():
         # 开始学习
         logger.info(f"课程列表过滤完毕, 当前课程任务数量: {len(course_task)}")
         for course in course_task:
-            process_course(chaoxing, course, notopen_action, speed, skip_video)
+            process_course(chaoxing, course, notopen_action, speed, skip_video, playwright_video)
         
         logger.info("所有课程学习任务已完成")
         notification.send("chaoxing : 所有课程学习任务已完成")
