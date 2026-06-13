@@ -63,6 +63,7 @@ class Chaoxing:
         FORBIDDEN = 1  # 403
         ERROR = 2
         TIMEOUT = 3
+        CAPTCHA = 4  # 验证码拦截
 
         @staticmethod
         def is_success(result):
@@ -684,14 +685,26 @@ class Chaoxing:
             },
         )
         if res.status_code == 200:
-            res_json = res.json()
+            # 检查是否是验证码页面（即使返回 200，也可能内容为 HTML）
+            if '<html' in res.text and '验证码' in res.text:
+                logger.error("答题提交触发验证码拦截 [9010]")
+                return self.StudyResult.CAPTCHA
+            try:
+                res_json = res.json()
+            except Exception:
+                logger.error(f'提交答题返回异常内容 -> {res.text[:300]}')
+                return self.StudyResult.ERROR
             if res_json["status"]:
                 logger.info(f'{"提交" if questions["pyFlag"] == "" else "保存"}答题成功 -> {res_json["msg"]}')
             else:
                 logger.error(f'{"提交" if questions["pyFlag"] == "" else "保存"}答题失败 -> {res_json["msg"]}')
                 return self.StudyResult.ERROR
         else:
-            logger.error(f'{"提交" if questions["pyFlag"] == "" else "保存"}答题失败 -> {res.text}')
+            # 非 200 响应也可能是验证码
+            if '验证码' in res.text or '操作异常' in res.text:
+                logger.error("答题提交触发验证码拦截 [9010]")
+                return self.StudyResult.CAPTCHA
+            logger.error(f'{"提交" if questions["pyFlag"] == "" else "保存"}答题失败 -> {res.text[:500]}')
             return self.StudyResult.ERROR
         return self.StudyResult.SUCCESS
 

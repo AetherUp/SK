@@ -319,7 +319,20 @@ def process_job(chaoxing, course, job, job_info, speed, skip_video=False, playwr
     # 测验任务
     elif job["type"] == "workid":
         logger.trace(f"识别到章节检测任务, 任务章节: {course['title']}")
-        return chaoxing.study_work(course, job, job_info) != chaoxing.StudyResult.ERROR
+        # 测验最多重试 3 轮，遇到验证码时等待更久
+        for attempt in range(3):
+            work_result = chaoxing.study_work(course, job, job_info)
+            if work_result == chaoxing.StudyResult.SUCCESS:
+                return True
+            if work_result == chaoxing.StudyResult.CAPTCHA:
+                wait_s = 120 + attempt * 60  # 验证码拦截：等待 2-4 分钟
+                logger.warning(f"答题提交触发验证码，{wait_s}s 后重试 ({attempt + 1}/3)")
+                time.sleep(wait_s)
+            elif attempt < 2:
+                logger.info(f"章节检测失败，30 秒后重试 ({attempt + 1}/3)")
+                time.sleep(30)
+        logger.warning(f"章节检测任务失败: {course['title']}")
+        return False
     # 阅读任务
     elif job["type"] == "read":
         logger.trace(f"识别到阅读任务, 任务章节: {course['title']}")
@@ -378,8 +391,8 @@ def process_chapter(chaoxing, course, point, RB, notopen_action, speed, auto_ski
     # 可能存在章节无任何内容的情况
     if not jobs:
         if RB.rollback_times > 0:
-            logger.trace(f"回滚中 尝试空页面任务, 任务章节: {course['title']}")
-            chaoxing.study_emptypage(course, point)
+            logger.warning(f"回滚中 章节任务为空，可能是服务器未准备好，稍后重试")
+            return 2, auto_skip_notopen  # 重试当前章节，不跳过
         return 1, auto_skip_notopen  # 继续下一章节
     
     # 遍历所有任务点，记录失败的任务
