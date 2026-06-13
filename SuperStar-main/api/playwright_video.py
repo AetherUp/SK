@@ -40,22 +40,19 @@ async def _study_video_playwright_async(course, job, job_info, speed=1.0) -> boo
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cookies.txt"
     )
 
-    # 查找 Chrome 可执行文件
+    # Playwright 自动查找浏览器（跨平台），仅在本地 Windows 特殊路径回退
+    chrome_exe = None
     local_appdata = os.environ.get("LOCALAPPDATA", "")
-    chrome_paths = [
+    fallback_paths = [
         os.path.join(local_appdata, "ms-playwright", "chromium-1223",
                      "chrome-win64", "chrome.exe"),
         os.path.join(local_appdata, "ms-playwright", "chromium_headless_shell-1223",
                      "chrome-headless-shell-win64", "chrome-headless-shell.exe"),
     ]
-    chrome_exe = None
-    for _p in chrome_paths:
+    for _p in fallback_paths:
         if os.path.exists(_p):
             chrome_exe = _p
             break
-    if not chrome_exe:
-        logger.error("[Playwright] 未找到 Chromium 可执行文件")
-        return False
 
     # 加载 cookies
     pw_cookies = []
@@ -80,15 +77,17 @@ async def _study_video_playwright_async(course, job, job_info, speed=1.0) -> boo
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            executable_path=chrome_exe,
-            args=[
+        launch_kwargs = {
+            "headless": True,
+            "args": [
                 "--disable-blink-features=AutomationControlled",
                 "--autoplay-policy=no-user-gesture-required",
                 "--mute-audio",
             ],
-        )
+        }
+        if chrome_exe:
+            launch_kwargs["executable_path"] = chrome_exe
+        browser = await p.chromium.launch(**launch_kwargs)
 
         context = await browser.new_context(
             viewport={"width": 1920, "height": 1080},
