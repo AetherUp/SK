@@ -38,7 +38,7 @@ jobs:
           [tiku]
           provider=Doubao
           submit=true
-          cover_rate = 0.8
+          cover_rate = 0.6
           true_list=正确,对,√,是
           false_list=错误,错,×,否,不对,不正确
 

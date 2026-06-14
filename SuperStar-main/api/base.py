@@ -622,16 +622,22 @@ class Chaoxing:
             q["answerField"][f'answer{q["id"]}'] = answer
             logger.info(f'{q["title"]} 填写答案为 {answer}')
         # 防检测：题库数≥4 题时随机答错 1 题，模拟真人
+        # 前提：答错后覆盖率仍不低于 COVER_RATE 阈值，避免只保存不提交卡死后续章节
         if total_questions >= 4 and found_answers >= 3 and random.random() < 0.3:
             covered = [q for q in questions["questions"] if q.get(f'answerSource{q["id"]}') == "cover"]
             if covered:
-                victim = random.choice(covered)
-                wrong = random_answer(victim["options"])
-                if wrong:
-                    victim["answerField"][f'answer{victim["id"]}'] = wrong
-                    victim[f'answerSource{victim["id"]}'] = "random"
-                    found_answers -= 1
-                    logger.info(f"防检测：故意答错 [{victim['title'][:20]}] -> {wrong}")
+                _after_found = found_answers - 1
+                _after_rate = _after_found / total_questions
+                if _after_rate >= self.tiku.COVER_RATE or self.rollback_times >= 1:
+                    victim = random.choice(covered)
+                    wrong = random_answer(victim["options"])
+                    if wrong:
+                        victim["answerField"][f'answer{victim["id"]}'] = wrong
+                        victim[f'answerSource{victim["id"]}'] = "random"
+                        found_answers = _after_found
+                        logger.info(f"防检测：故意答错 [{victim['title'][:20]}] -> {wrong}")
+                else:
+                    logger.info(f"防检测跳过：答错后覆盖率 {_after_rate:.0%} 低于阈值 {self.tiku.COVER_RATE:.0%}")
 
         cover_rate = (found_answers / total_questions) * 100
         logger.info(f"章节检测题库覆盖率： {cover_rate:.0f}%")

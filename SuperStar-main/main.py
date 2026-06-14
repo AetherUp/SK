@@ -391,8 +391,12 @@ def process_chapter(chaoxing, course, point, RB, notopen_action, speed, auto_ski
     # 可能存在章节无任何内容的情况
     if not jobs:
         if RB.rollback_times > 0:
-            logger.warning(f"回滚中 章节任务为空，可能是服务器未准备好，稍后重试")
-            return 2, auto_skip_notopen  # 重试当前章节，不跳过
+            if RB.rollback_times >= 3:
+                logger.error(f"章节 {point['title']} 回滚{RB.rollback_times}次任务仍为空，跳过此章继续")
+                return 1, auto_skip_notopen
+            logger.warning(f"回滚中 章节任务为空，尝试空页面处理 ({RB.rollback_times}/3)")
+            chaoxing.study_emptypage(course, point)
+            return 2, auto_skip_notopen  # 重试一次，看 emptypage 是否生效
         return 1, auto_skip_notopen  # 继续下一章节
     
     # 遍历所有任务点，记录失败的任务
